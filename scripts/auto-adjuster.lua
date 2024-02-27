@@ -4,8 +4,8 @@ local externaltools = true
 local profiles = {}
 
 local internal_opts = {
-    savedata = "~~/script-opts",
-    executor = "~~/scripts"
+    savedata = "~~/data",
+    executor = "~~/tools"
 }
 
 local properties = {
@@ -48,7 +48,7 @@ local function calculateSimilarity(str1, str2)
     for word in str2:lower():gmatch("%a+") do
         table.insert(words2, word)
     end
-    
+
     local intersection = 0
     for _, word1 in ipairs(words1) do
         for _, word2 in ipairs(words2) do
