@@ -10,6 +10,7 @@ local internal_opts = {
 
 local properties = {
     saturation = "number",
+    folder = "special",
     ext_volume = "special",
     volume = "native",
     brightness = "number",
@@ -18,6 +19,7 @@ local properties = {
     vf = "native"
 }
 
+local usingFolder = false
 local original_top = mp.get_property_native("ontop")
 function get_system_volume()
     if (not externaltools) then return end
@@ -30,6 +32,22 @@ function get_system_volume()
         mp.set_property_native("ontop", original_top)
     end)
     return output
+end
+
+function getSearchMethod()
+    local compareFrom = mp.get_property("filename/no-ext")
+    if (usingFolder) then 
+        local dir, filename = utils.split_path(mp.get_property("path"))
+        compareFrom = dir 
+        local compareFrom = compareFrom:gsub([[\]], "\\")
+        compareFrom = string.sub(compareFrom, 1, -2)
+        local parts = {}
+        for part in string.gmatch(compareFrom, "[^\\]+") do
+            table.insert(parts, part)
+        end
+        return parts[#parts]
+    end
+    return compareFrom
 end
 
 local original_volume = get_system_volume()
@@ -65,12 +83,12 @@ local function calculateSimilarity(str1, str2)
 end
 
 function setProfile()
-    local filename = mp.get_property("filename/no-ext")
+    local compareFrom = getSearchMethod()
     local maxSimilarity = 0
     local bestMatch
     local profileName
     for name, profile in pairs(profiles) do
-        local sim = calculateSimilarity(filename, name)
+        local sim = calculateSimilarity(compareFrom, name)
         if sim > maxSimilarity then
             maxSimilarity = sim
             bestMatch = profile
@@ -79,9 +97,9 @@ function setProfile()
     end
     if maxSimilarity >= 0.25 then 
         setProperties(bestMatch)
-        mp.osd_message("(Likeness:" .. maxSimilarity .. ") Profile set to " .. profileName)
+        mp.osd_message("(Likeness: " .. maxSimilarity .. ") Profile set to " .. profileName)
     else
-        mp.osd_message("(Likeness:" .. maxSimilarity .. ") No matching profile found")
+        mp.osd_message("(Likeness: " .. maxSimilarity .. ") No profile found")
     end
 end
 
@@ -95,19 +113,60 @@ function setProperties(config)
                 config[prop] = ""
             elseif propType == "special" then
                 config[prop] = nil
-                if (prop == "ext_volume") then config[prop] = set_system_volume(original_volume) end
+                if (prop == "ext_volume") then config[prop] = original_volume end
+                if (prop == "folder") then config[prop] = false end
             end
         end
     end
     for prop, value in pairs(config) do
         if properties[prop] == "special" then
             if (prop == "ext_volume") then set_system_volume(value) end
+            if (prop == "folder") then usingFolder = value end
         elseif properties[prop] == "number" then
             mp.set_property_number(prop, value)
         elseif properties[prop] == "native" then
             mp.set_property_native(prop, value)
         end
     end
+end
+
+function copyProfile()
+    local filename = getSearchMethod()
+    profiles[filename] = {}
+    for prop, propType in pairs(properties) do
+        if propType == "number" then
+            profiles[filename][prop] = mp.get_property_number(prop)
+        elseif propType == "native" then
+            profiles[filename][prop] = mp.get_property_native(prop)
+        elseif propType == "special" then
+            profiles[filename][prop] = mp.get_property_number(prop)
+            if (prop == "ext_volume") then profiles[filename][prop] = get_system_volume() end
+            if (prop == "folder") then profiles[filename][prop] = usingFolder end
+        end
+    end
+    saveProfiles()
+end
+
+function loadProfiles()
+    local file = io.open(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"}), "r")
+    if file then
+        local data = file:read("*all")
+        profiles = utils.parse_json(data)
+        file:close()
+
+        mp.add_timeout(1, function()
+            setProfile()
+        end)
+    end
+end
+
+function clearProfiles()
+    mp.osd_message("Cleared + backed up all profiles")
+    local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
+    local backupFilePath = filePath .. "_backup"
+    os.rename(filePath, backupFilePath)
+    profiles = {}
+    setProperties()
 end
 
 function saveProfiles()
@@ -136,42 +195,36 @@ function saveProfiles()
         mp.osd_message("Failed to save profiles")
     end
 end
-function copyProfile()
-    local filename = mp.get_property("filename/no-ext")
-    profiles[filename] = {}
-    for prop, propType in pairs(properties) do
-        if propType == "number" then
-            profiles[filename][prop] = mp.get_property_number(prop)
-        elseif propType == "native" then
-            profiles[filename][prop] = mp.get_property_native(prop)
-        elseif propType == "special" then
-            profiles[filename][prop] = mp.get_property_number(prop)
-            if (prop == "ext_volume") then profiles[filename][prop] = get_system_volume() end
+
+function undoProfile()
+    local filename = getSearchMethod()
+    local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
+    local file = io.open(filePath, "r")
+    local existingData = {}
+    
+    if file then
+        local jsonData = file:read("*all")
+        existingData = utils.parse_json(jsonData)
+        file:close()
+    end
+    
+    for k, v in pairs(profiles) do
+        if (k == filename) then
+            existingData[k] = nil
         end
     end
-    saveProfiles()
-end
-
-function loadProfiles()
-    local file = io.open(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"}), "r")
+    
+    local saveData = utils.format_json(existingData)
+    file = io.open(filePath, "w")
+    
     if file then
-        local data = file:read("*all")
-        profiles = utils.parse_json(data)
+        file:write(saveData)
         file:close()
-
-        mp.add_timeout(1, function()
-            setProfile()
-        end)
+        mp.osd_message("Current profile removed")
+        setProperties()
+    else
+        mp.osd_message("Failed to remove profile")
     end
-end
-
-function clearProfiles()
-    mp.osd_message("Cleared + backed up all profiles")
-    local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
-    local backupFilePath = filePath .. "_backup"
-    os.rename(filePath, backupFilePath)
-    profiles = {}
-    setProperties()
 end
 
 loadProfiles()
@@ -181,6 +234,12 @@ mp.register_event("shutdown", function()
     mp.set_property_native("ontop", original_top)
 end)
 
-mp.add_forced_key_binding("n", "saveProfile", copyProfile)
-mp.add_forced_key_binding("h", "reloadProfiles", loadProfiles)
-mp.add_forced_key_binding("c", "clearProfiles", clearProfiles)
+mp.add_forced_key_binding("ctrl+shift+c", "saveProfile", copyProfile)
+mp.add_forced_key_binding("ctrl+shift+r", "reloadProfiles", loadProfiles)
+mp.add_forced_key_binding("ctrl+shift+l", "clearProfiles", clearProfiles)
+mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", undoProfile)
+
+mp.add_forced_key_binding("ctrl+shift+f", "toggleFolderMode", function()
+    usingFolder = not usingFolder
+    mp.osd_message("Using folder = "..tostring(usingFolder))
+end)
