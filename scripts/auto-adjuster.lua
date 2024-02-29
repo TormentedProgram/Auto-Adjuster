@@ -99,6 +99,11 @@ function setProfile()
         setProperties(bestMatch)
         mp.osd_message("(Likeness: " .. maxSimilarity .. ") Profile set to " .. profileName)
     else
+        if (not usingFolder) then
+            usingFolder = true
+            setProfile()
+            return;
+        end
         mp.osd_message("(Likeness: " .. maxSimilarity .. ") No profile found")
     end
 end
