@@ -34,9 +34,14 @@ function get_system_volume()
     return output
 end
 
-function getSearchMethod()
-    local compareFrom = mp.get_property("filename/no-ext")
-    if (usingFolder) then 
+function getSearchMethod(searchType)
+    local compareFrom
+    if (not searchType) then searchType = "file" end
+    if (usingFolder) then searchType = "folder" end
+    searchType = searchType:lower()
+    if (searchType == "file") then
+        compareFrom = mp.get_property("filename/no-ext")
+    elseif (searchType == "folder") then
         local dir, filename = utils.split_path(mp.get_property("path"))
         compareFrom = dir 
         local compareFrom = compareFrom:gsub([[\]], "\\")
@@ -45,7 +50,7 @@ function getSearchMethod()
         for part in string.gmatch(compareFrom, "[^\\]+") do
             table.insert(parts, part)
         end
-        return parts[#parts]
+        compareFrom = parts[#parts]
     end
     return compareFrom
 end
@@ -57,33 +62,55 @@ function set_system_volume(volume)
     os.execute(executor .. ' /SetVolume "Volume" ' .. volume)
 end
 
+--[[https://gist.github.com/Badgerati/3261142]]
 local function calculateSimilarity(str1, str2)
-    local words1 = {}
-    local words2 = {}
-    for word in str1:lower():gmatch("%a+") do
-        table.insert(words1, word)
+    local len1 = string.len(str1)
+    local len2 = string.len(str2)
+    local matrix = {}
+    local cost = 0
+    
+    -- quick cut-offs to save time
+    if (len1 == 0) then
+        return 0  -- When one string is empty, they are perfectly similar
+    elseif (len2 == 0) then
+        return 0  -- When one string is empty, they are perfectly similar
+    elseif (str1 == str2) then
+        return 100  -- When both strings are identical, they are perfectly similar
     end
-    for word in str2:lower():gmatch("%a+") do
-        table.insert(words2, word)
+    
+    -- initialise the base matrix values
+    for i = 0, len1, 1 do
+        matrix[i] = {}
+        matrix[i][0] = i
     end
-
-    local intersection = 0
-    for _, word1 in ipairs(words1) do
-        for _, word2 in ipairs(words2) do
-            if word1 == word2 then
-                intersection = intersection + 1
-                break
+    for j = 0, len2, 1 do
+        matrix[0][j] = j
+    end
+    
+    -- actual Levenshtein algorithm
+    for i = 1, len1, 1 do
+        for j = 1, len2, 1 do
+            if (str1:byte(i) == str2:byte(j)) then
+                cost = 0
+            else
+                cost = 1
             end
+            
+            matrix[i][j] = math.min(matrix[i-1][j] + 1, matrix[i][j-1] + 1, matrix[i-1][j-1] + cost)
         end
     end
     
-    local similarity = intersection / math.max(#words1, #words2)
+    -- Calculate similarity as a value between 0 and 100
+    local maxLen = math.max(len1, len2)
+    local distance = matrix[len1][len2]
+    local similarity = math.floor((1 - distance / maxLen) * 100)
     
     return similarity
 end
 
-function setProfile()
-    local compareFrom = getSearchMethod()
+function setProfile(searchType)
+    if (not searchType) then searchType = "file" end
+    local compareFrom = getSearchMethod(searchType)
     local maxSimilarity = 0
     local bestMatch
     local profileName
@@ -95,16 +122,15 @@ function setProfile()
             profileName = name
         end
     end
-    if maxSimilarity >= 0.25 then 
+    if maxSimilarity >= 35 then 
         setProperties(bestMatch)
-        mp.osd_message("(Likeness: " .. maxSimilarity .. ") Profile set to " .. profileName)
+        mp.osd_message("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. profileName)
     else
-        if (not usingFolder) then
-            usingFolder = true
-            setProfile()
+        if (searchType == "file") then
+            setProfile("folder")
             return;
         end
-        mp.osd_message("(Likeness: " .. maxSimilarity .. ") No profile found")
+        mp.osd_message("(Likeness: " .. maxSimilarity .. "%) No profile found")
     end
 end
 
@@ -226,7 +252,6 @@ function undoProfile()
         file:write(saveData)
         file:close()
         mp.osd_message("Current profile removed")
-        setProperties()
     else
         mp.osd_message("Failed to remove profile")
     end
@@ -246,5 +271,5 @@ mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", undoProfile)
 
 mp.add_forced_key_binding("ctrl+shift+f", "toggleFolderMode", function()
     usingFolder = not usingFolder
-    mp.osd_message("Using folder = "..tostring(usingFolder))
+    mp.osd_message("Using folder setting = "..tostring(usingFolder))
 end)
