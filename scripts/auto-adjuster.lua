@@ -1,11 +1,11 @@
 local utils = require 'mp.utils'
-
-local externaltools = true
 local profiles = {}
 
 local internal_opts = {
     savedata = "~~/data",
-    executor = "~~/tools"
+    executor = "~~/tools",
+    similarity = 35,
+    externaltools = true
 }
 
 local properties = {
@@ -22,7 +22,7 @@ local properties = {
 local usingFolder = false
 local original_top = mp.get_property_native("ontop")
 function get_system_volume()
-    if (not externaltools) then return end
+    if (not internal_opts.externaltools) then return end
     local executor = mp.command_native({"expand-path", internal_opts.executor .. "/svcl.exe"})
     mp.set_property_native("ontop", true)
     local file = io.popen(executor .. ' /Stdout /GetPercent "Volume"')
@@ -57,7 +57,7 @@ end
 
 local original_volume = get_system_volume()
 function set_system_volume(volume)
-    if (not externaltools) then return end
+    if (not internal_opts.externaltools) then return end
     local executor = mp.command_native({"expand-path", internal_opts.executor .. "/svcl.exe"})
     os.execute(executor .. ' /SetVolume "Volume" ' .. volume)
 end
@@ -71,9 +71,9 @@ local function calculateSimilarity(str1, str2)
     
     -- quick cut-offs to save time
     if (len1 == 0) then
-        return 0  -- When one string is empty, they are perfectly similar
+        return 0  -- When one string is empty, they are perfectly different
     elseif (len2 == 0) then
-        return 0  -- When one string is empty, they are perfectly similar
+        return 0  -- When one string is empty, they are perfectly different
     elseif (str1 == str2) then
         return 100  -- When both strings are identical, they are perfectly similar
     end
@@ -108,7 +108,8 @@ local function calculateSimilarity(str1, str2)
     return similarity
 end
 
-function setProfile(searchType)
+function setProfile(searchType, context)
+    if (not context) then context = "undefined" end
     if (not searchType) then searchType = "file" end
     local compareFrom = getSearchMethod(searchType)
     local maxSimilarity = 0
@@ -122,8 +123,12 @@ function setProfile(searchType)
             profileName = name
         end
     end
-    if maxSimilarity >= 35 then 
+    if maxSimilarity >= internal_opts.similarity then 
         setProperties(bestMatch)
+        if (context == "reload") then
+            mp.osd_message("Profile reloaded successfully..")
+            return;
+        end
         mp.osd_message("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. profileName)
     else
         if (searchType == "file") then
@@ -178,7 +183,8 @@ function copyProfile()
     saveProfiles()
 end
 
-function loadProfiles()
+function loadProfiles(context)
+    if (not context) then context = "undefined" end
     local file = io.open(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"}), "r")
     if file then
         local data = file:read("*all")
@@ -186,7 +192,7 @@ function loadProfiles()
         file:close()
 
         mp.add_timeout(1, function()
-            setProfile()
+            setProfile("file", context)
         end)
     end
 end
@@ -264,10 +270,10 @@ mp.register_event("shutdown", function()
     mp.set_property_native("ontop", original_top)
 end)
 
-mp.add_forced_key_binding("ctrl+shift+c", "saveProfile", copyProfile)
-mp.add_forced_key_binding("ctrl+shift+r", "reloadProfiles", loadProfiles)
-mp.add_forced_key_binding("ctrl+shift+l", "clearProfiles", clearProfiles)
-mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", undoProfile)
+mp.add_forced_key_binding("ctrl+shift+c", "saveProfile", function() copyProfile() end)
+mp.add_forced_key_binding("ctrl+shift+r", "reloadProfiles", function() loadProfiles("reload") end)
+mp.add_forced_key_binding("ctrl+shift+l", "clearProfiles", function() clearProfiles() end)
+mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", function() undoProfile() end)
 
 mp.add_forced_key_binding("ctrl+shift+f", "toggleFolderMode", function()
     usingFolder = not usingFolder
