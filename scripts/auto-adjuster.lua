@@ -4,7 +4,7 @@ local profiles = {}
 local internal_opts = {
     savedata = "~~/data",
     executor = "~~/tools",
-    similarity = 35,
+    similarity = 40,
     showMessages = true,
     externaltools = true
 }
