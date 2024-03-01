@@ -34,6 +34,44 @@ function get_system_volume()
     return output
 end
 
+function json_format(tbl)
+    local json_str = utils.format_json(tbl)
+    local indent_char = "    "
+    local indent_level = 0
+    local in_string = false
+
+    local function insert_whitespace()
+        return "\n" .. string.rep(indent_char, indent_level)
+    end
+
+    local beautified_str = ""
+    for i = 1, #json_str do
+        local char = string.sub(json_str, i, i)
+
+        if char == '"' then
+            in_string = not in_string
+        end
+
+        if not in_string then
+            if char == "{" or char == "[" then
+                indent_level = indent_level + 1
+                beautified_str = beautified_str .. char .. insert_whitespace()
+            elseif char == "}" or char == "]" then
+                indent_level = indent_level - 1
+                beautified_str = beautified_str .. insert_whitespace() .. char
+            elseif char == "," then
+                beautified_str = beautified_str .. char .. insert_whitespace()
+            else
+                beautified_str = beautified_str .. char
+            end
+        else
+            beautified_str = beautified_str .. char
+        end
+    end
+
+    return beautified_str
+end
+
 function getSearchMethod(searchType)
     local compareFrom
     if (not searchType) then searchType = "file" end
@@ -221,7 +259,7 @@ function saveProfiles()
         existingData[k] = v
     end
     
-    local saveData = utils.format_json(existingData)
+    local saveData = json_format(json_format)
     file = io.open(filePath, "w")
     
     if file then
@@ -251,7 +289,7 @@ function undoProfile()
         end
     end
     
-    local saveData = utils.format_json(existingData)
+    local saveData = json_format(existingData)
     file = io.open(filePath, "w")
     
     if file then
