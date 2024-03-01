@@ -5,6 +5,7 @@ local internal_opts = {
     savedata = "~~/data",
     executor = "~~/tools",
     similarity = 35,
+    showMessages = true,
     externaltools = true
 }
 
@@ -19,6 +20,7 @@ local properties = {
     vf = "native"
 }
 
+local hasProfile = false
 local usingFolder = false
 local original_top = mp.get_property_native("ontop")
 function get_system_volume()
@@ -93,7 +95,7 @@ function getSearchMethod(searchType)
     return compareFrom
 end
 
-local original_volume = get_system_volume()
+local original_volume
 function set_system_volume(volume)
     if (not internal_opts.externaltools) then return end
     local executor = mp.command_native({"expand-path", internal_opts.executor .. "/svcl.exe"})
@@ -162,18 +164,21 @@ function setProfile(searchType, context)
         end
     end
     if maxSimilarity >= internal_opts.similarity then 
+        original_volume = get_system_volume()
         setProperties(bestMatch)
+        hasProfile = true
         if (context == "reload") then
-            mp.osd_message("Profile reloaded successfully..")
+            osd_print("Profile reloaded successfully..")
             return;
         end
-        mp.osd_message("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. profileName)
+        osd_print("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. profileName)
     else
         if (searchType == "file") then
             setProfile("folder")
             return;
         end
-        mp.osd_message("(Likeness: " .. maxSimilarity .. "%) No profile found")
+        hasProfile = false
+        osd_print("(Likeness: " .. maxSimilarity .. "%) No profile found")
     end
 end
 
@@ -194,7 +199,7 @@ function setProperties(config)
     end
     for prop, value in pairs(config) do
         if properties[prop] == "special" then
-            if (prop == "ext_volume") then set_system_volume(value) end
+            if (prop == "ext_volume") then if (value ~= original_volume) then set_system_volume(value) end end
             if (prop == "folder") then usingFolder = value end
         elseif properties[prop] == "number" then
             mp.set_property_number(prop, value)
@@ -236,7 +241,7 @@ function loadProfiles(context)
 end
 
 function clearProfiles()
-    mp.osd_message("Cleared + backed up all profiles")
+    osd_print("Cleared + backed up all profiles")
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
     local backupFilePath = filePath .. "_backup"
     os.rename(filePath, backupFilePath)
@@ -265,9 +270,9 @@ function saveProfiles()
     if file then
         file:write(saveData)
         file:close()
-        mp.osd_message("Profiles saved")
+        osd_print("Profiles saved")
     else
-        mp.osd_message("Failed to save profiles")
+        osd_print("Failed to save profiles")
     end
 end
 
@@ -295,16 +300,16 @@ function undoProfile()
     if file then
         file:write(saveData)
         file:close()
-        mp.osd_message("Current profile removed")
+        osd_print("Current profile removed")
     else
-        mp.osd_message("Failed to remove profile")
+        osd_print("Failed to remove profile")
     end
 end
 
 loadProfiles()
 
 mp.register_event("shutdown", function()
-    set_system_volume(original_volume)
+    if (hasProfile) then set_system_volume(original_volume) end
     mp.set_property_native("ontop", original_top)
 end)
 
@@ -315,5 +320,5 @@ mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", function() undoProfile(
 
 mp.add_forced_key_binding("ctrl+shift+f", "toggleFolderMode", function()
     usingFolder = not usingFolder
-    mp.osd_message("Using folder setting = "..tostring(usingFolder))
+    osd_print("Using folder setting = "..tostring(usingFolder))
 end)
