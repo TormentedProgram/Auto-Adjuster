@@ -4,7 +4,7 @@ local profiles = {}
 local internal_opts = {
     savedata = "~~/data",
     executor = "~~/tools",
-    similarity = 35,
+    similarity = 40,
     showMessages = true,
     externaltools = true
 }
@@ -34,6 +34,10 @@ function get_system_volume()
         mp.set_property_native("ontop", original_top)
     end)
     return output
+end
+
+function osd_print(message)
+    if (internal_opts.showMessages) then mp.osd_message(message) end
 end
 
 function json_format(tbl)
