@@ -274,7 +274,7 @@ function saveProfiles()
         existingData[k] = v
     end
     
-    local saveData = json_format(json_format)
+    local saveData = json_format(existingData)
     file = io.open(filePath, "w")
     
     if file then
@@ -304,6 +304,7 @@ function undoProfile()
         end
     end
     
+    profiles[filename] = nil
     local saveData = json_format(existingData)
     file = io.open(filePath, "w")
     
