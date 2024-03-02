@@ -24,27 +24,27 @@ local properties = {
 local hasProfile = false
 local usingFolder = false
 local original_top = mp.get_property_native("ontop")
-function get_system_volume()
+local function get_system_volume()
     if (not internal_opts.externaltools) then return end
     local executor = mp.command_native({"expand-path", internal_opts.executor .. "/svcl.exe"})
     mp.set_property_native("ontop", true)
-    local file = io.popen(executor .. ' /Stdout /GetPercent "Volume"')
+    local file = io.popen(executor .. ' /Stdout /GetPercent "DefaultRenderDevice"')
     local output = file:read('*all'):gsub("[\r\n]", "")
     file:close()
     mp.add_timeout(3, function()
         mp.set_property_native("ontop", original_top)
     end)
-    return output
+    return math.floor(output)
 end
 
-function osd_print(message)
+local function osd_print(message)
     if (internal_opts.showMessages) then 
         print(message)
         mp.osd_message(message) 
     end
 end
 
-function json_format(tbl)
+local function json_format(tbl)
     local json_str = utils.format_json(tbl)
     local indent_char = "    "
     local indent_level = 0
@@ -82,7 +82,7 @@ function json_format(tbl)
     return beautified_str
 end
 
-function getSearchMethod(searchType)
+local function getSearchMethod(searchType)
     local compareFrom
     if (not searchType) then searchType = "file" end
     if (usingFolder) then searchType = "folder" end
@@ -92,10 +92,10 @@ function getSearchMethod(searchType)
     elseif (searchType == "folder") then
         local dir, filename = utils.split_path(mp.get_property("path"))
         compareFrom = dir 
-        local compareFrom = compareFrom:gsub([[\]], "\\")
+        compareFrom = compareFrom:gsub("\\", "\\\\\\")
         compareFrom = string.sub(compareFrom, 1, -2)
         local parts = {}
-        for part in string.gmatch(compareFrom, "[^\\]+") do
+        for part in string.gmatch(compareFrom, "[^\\\\\\]+") do
             table.insert(parts, part)
         end
         compareFrom = parts[#parts]
@@ -104,10 +104,10 @@ function getSearchMethod(searchType)
 end
 
 local original_volume
-function set_system_volume(volume)
+local function set_system_volume(volume)
     if (not internal_opts.externaltools) then return end
     local executor = mp.command_native({"expand-path", internal_opts.executor .. "/svcl.exe"})
-    os.execute(executor .. ' /SetVolume "Volume" ' .. volume)
+    os.execute(executor .. ' /SetVolume "DefaultRenderDevice" ' .. math.floor(volume))
 end
 
 --[[https://gist.github.com/Badgerati/3261142]]
@@ -156,7 +156,34 @@ local function calculateSimilarity(str1, str2)
     return similarity
 end
 
-function setProfile(searchType, context)
+local function setProperties(config)
+    if not config then
+        config = {}
+        for prop, propType in pairs(properties) do
+            if propType == "number" then
+                config[prop] = 0
+            elseif propType == "native" then
+                config[prop] = ""
+            elseif propType == "special" then
+                config[prop] = nil
+                if (prop == "ext_volume") then config[prop] = original_volume end
+                if (prop == "folder") then config[prop] = false end
+            end
+        end
+    end
+    for prop, value in pairs(config) do
+        if properties[prop] == "special" then
+            if (prop == "ext_volume") then if (value ~= original_volume) then set_system_volume(value) end end
+            if (prop == "folder") then usingFolder = value end
+        elseif properties[prop] == "number" then
+            mp.set_property_number(prop, value)
+        elseif properties[prop] == "native" then
+            mp.set_property_native(prop, value)
+        end
+    end
+end
+
+local function setProfile(searchType, context)
     if (not context) then context = "undefined" end
     if (not searchType) then searchType = "file" end
     local compareFrom = getSearchMethod(searchType)
@@ -192,74 +219,7 @@ function setProfile(searchType, context)
     end
 end
 
-function setProperties(config)
-    if not config then
-        config = {}
-        for prop, propType in pairs(properties) do
-            if propType == "number" then
-                config[prop] = 0
-            elseif propType == "native" then
-                config[prop] = ""
-            elseif propType == "special" then
-                config[prop] = nil
-                if (prop == "ext_volume") then config[prop] = original_volume end
-                if (prop == "folder") then config[prop] = false end
-            end
-        end
-    end
-    for prop, value in pairs(config) do
-        if properties[prop] == "special" then
-            if (prop == "ext_volume") then if (value ~= original_volume) then set_system_volume(value) end end
-            if (prop == "folder") then usingFolder = value end
-        elseif properties[prop] == "number" then
-            mp.set_property_number(prop, value)
-        elseif properties[prop] == "native" then
-            mp.set_property_native(prop, value)
-        end
-    end
-end
-
-function copyProfile()
-    local filename = getSearchMethod()
-    profiles[filename] = {}
-    for prop, propType in pairs(properties) do
-        if propType == "number" then
-            profiles[filename][prop] = mp.get_property_number(prop)
-        elseif propType == "native" then
-            profiles[filename][prop] = mp.get_property_native(prop)
-        elseif propType == "special" then
-            profiles[filename][prop] = mp.get_property_number(prop)
-            if (prop == "ext_volume") then profiles[filename][prop] = get_system_volume() end
-            if (prop == "folder") then profiles[filename][prop] = usingFolder end
-        end
-    end
-    saveProfiles()
-end
-
-function loadProfiles(context)
-    if (not context) then context = "undefined" end
-    local file = io.open(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"}), "r")
-    if file then
-        local data = file:read("*all")
-        profiles = utils.parse_json(data)
-        file:close()
-
-        mp.add_timeout(internal_opts.wait_length, function()
-            setProfile("file", context)
-        end)
-    end
-end
-
-function clearProfiles()
-    osd_print("Cleared + backed up all profiles")
-    local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
-    local backupFilePath = filePath .. "_backup"
-    os.rename(filePath, backupFilePath)
-    profiles = {}
-    setProperties()
-end
-
-function saveProfiles()
+local function saveProfiles()
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
     local file = io.open(filePath, "r")
     local existingData = {}
@@ -286,7 +246,47 @@ function saveProfiles()
     end
 end
 
-function undoProfile()
+local function copyProfile()
+    local filename = getSearchMethod()
+    profiles[filename] = {}
+    for prop, propType in pairs(properties) do
+        if propType == "number" then
+            profiles[filename][prop] = mp.get_property_number(prop)
+        elseif propType == "native" then
+            profiles[filename][prop] = mp.get_property_native(prop)
+        elseif propType == "special" then
+            profiles[filename][prop] = mp.get_property_number(prop)
+            if (prop == "ext_volume") then profiles[filename][prop] = get_system_volume() end
+            if (prop == "folder") then profiles[filename][prop] = usingFolder end
+        end
+    end
+    saveProfiles()
+end
+
+local function loadProfiles(context)
+    if (not context) then context = "undefined" end
+    local file = io.open(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"}), "r")
+    if file then
+        local data = file:read("*all")
+        profiles = utils.parse_json(data)
+        file:close()
+
+        mp.add_timeout(internal_opts.wait_length, function()
+            setProfile("file", context)
+        end)
+    end
+end
+
+local function clearProfiles()
+    osd_print("Cleared + backed up all profiles")
+    local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
+    local backupFilePath = filePath .. "_backup"
+    os.rename(filePath, backupFilePath)
+    profiles = {}
+    setProperties()
+end
+
+local function undoProfile()
     local filename = getSearchMethod()
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
     local file = io.open(filePath, "r")
