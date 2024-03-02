@@ -2,6 +2,7 @@ local utils = require 'mp.utils'
 local profiles = {}
 
 local internal_opts = {
+    wait_length = 0.5,
     savedata = "~~/data",
     executor = "~~/tools",
     similarity = 40,
@@ -37,7 +38,10 @@ function get_system_volume()
 end
 
 function osd_print(message)
-    if (internal_opts.showMessages) then mp.osd_message(message) end
+    if (internal_opts.showMessages) then 
+        print(message)
+        mp.osd_message(message) 
+    end
 end
 
 function json_format(tbl)
@@ -168,9 +172,11 @@ function setProfile(searchType, context)
         end
     end
     if maxSimilarity >= internal_opts.similarity then 
-        original_volume = get_system_volume()
-        setProperties(bestMatch)
         hasProfile = true
+        original_volume = get_system_volume()
+        mp.add_timeout(internal_opts.wait_length, function()
+            setProperties(bestMatch)
+        end)
         if (context == "reload") then
             osd_print("Profile reloaded successfully..")
             return;
@@ -238,7 +244,7 @@ function loadProfiles(context)
         profiles = utils.parse_json(data)
         file:close()
 
-        mp.add_timeout(1, function()
+        mp.add_timeout(internal_opts.wait_length, function()
             setProfile("file", context)
         end)
     end
