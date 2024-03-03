@@ -1,6 +1,11 @@
 local utils = require 'mp.utils'
 local profiles = {}
 
+local selected = {
+    name = "undefined",
+    profile,
+}
+
 local internal_opts = {
     wait_length = 0.5,
     savedata = "~~/data",
@@ -21,6 +26,7 @@ local properties = {
     vf = "native"
 }
 
+local removedProfile = {}
 local hasProfile = false
 local usingFolder = false
 local original_top = mp.get_property_native("ontop")
@@ -31,7 +37,7 @@ local function get_system_volume()
     local file = io.popen(executor .. ' /Stdout /GetPercent "DefaultRenderDevice"')
     local output = file:read('*all'):gsub("[\r\n]", "")
     file:close()
-    mp.add_timeout(3, function()
+    mp.add_timeout(2, function()
         mp.set_property_native("ontop", original_top)
     end)
     return math.floor(output)
@@ -42,6 +48,27 @@ local function osd_print(message)
         print(message)
         mp.osd_message(message) 
     end
+end
+
+local function validatePath(path)
+    local directory = path:match("(.+)/.+")
+    if not directory then
+        return
+    end
+
+    local file = io.open(directory, "r")
+    if file then
+        file:close()
+        return path
+    else
+        local success, err = os.execute("mkdir \"" .. directory .. "\"")
+        if not success then
+            print("Error creating directory: " .. err)
+            return mp.command_native({"expand-path", "~~"})
+        end
+        return path
+    end
+    return mp.command_native({"expand-path", "~~"})
 end
 
 local function json_format(tbl)
@@ -188,27 +215,26 @@ local function setProfile(searchType, context)
     if (not searchType) then searchType = "file" end
     local compareFrom = getSearchMethod(searchType)
     local maxSimilarity = 0
-    local bestMatch
     local profileName
     for name, profile in pairs(profiles) do
         local sim = calculateSimilarity(compareFrom, name)
         if sim > maxSimilarity then
             maxSimilarity = sim
-            bestMatch = profile
-            profileName = name
+            selected.profile = profile
+            selected.name = name
         end
     end
     if maxSimilarity >= internal_opts.similarity then 
         hasProfile = true
         original_volume = get_system_volume()
         mp.add_timeout(internal_opts.wait_length, function()
-            setProperties(bestMatch)
+            setProperties(selected.profile)
         end)
         if (context == "reload") then
             osd_print("Profile reloaded successfully..")
             return;
         end
-        osd_print("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. profileName)
+        osd_print("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. selected.name)
     else
         if (searchType == "file") then
             setProfile("folder")
@@ -219,9 +245,10 @@ local function setProfile(searchType, context)
     end
 end
 
-local function saveProfiles()
+local function saveProfiles(context)
+    if (not context) then context = "undefined" end
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
-    local file = io.open(filePath, "r")
+    local file = io.open(validatePath(filePath), "r")
     local existingData = {}
     
     if file then
@@ -235,11 +262,15 @@ local function saveProfiles()
     end
     
     local saveData = json_format(existingData)
-    file = io.open(filePath, "w")
+    file = io.open(validatePath(filePath), "w")
     
     if file then
         file:write(saveData)
         file:close()
+        if (context == "redo") then
+            osd_print("Profile remove undone") 
+            return
+        end
         osd_print("Profiles saved")
     else
         osd_print("Failed to save profiles")
@@ -265,7 +296,7 @@ end
 
 local function loadProfiles(context)
     if (not context) then context = "undefined" end
-    local file = io.open(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"}), "r")
+    local file = io.open(validatePath(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})), "r")
     if file then
         local data = file:read("*all")
         profiles = utils.parse_json(data)
@@ -287,9 +318,9 @@ local function clearProfiles()
 end
 
 local function undoProfile()
-    local filename = getSearchMethod()
+    local filename = selected.name
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
-    local file = io.open(filePath, "r")
+    local file = io.open(validatePath(filePath), "r")
     local existingData = {}
     
     if file then
@@ -304,9 +335,10 @@ local function undoProfile()
         end
     end
     
+    removedProfile = profiles[filename]
     profiles[filename] = nil
     local saveData = json_format(existingData)
-    file = io.open(filePath, "w")
+    file = io.open(validatePath(filePath), "w")
     
     if file then
         file:write(saveData)
@@ -315,6 +347,12 @@ local function undoProfile()
     else
         osd_print("Failed to remove profile")
     end
+end
+
+local function redoProfile()
+    local filename = selected.name
+    profiles[filename] = removedProfile
+    saveProfiles("redo")
 end
 
 loadProfiles()
@@ -328,6 +366,7 @@ mp.add_forced_key_binding("ctrl+shift+c", "saveProfile", function() copyProfile(
 mp.add_forced_key_binding("ctrl+shift+r", "reloadProfiles", function() loadProfiles("reload") end)
 mp.add_forced_key_binding("ctrl+shift+l", "clearProfiles", function() clearProfiles() end)
 mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", function() undoProfile() end)
+mp.add_forced_key_binding("ctrl+shift+y", "redoProfile", function() redoProfile() end)
 
 mp.add_forced_key_binding("ctrl+shift+f", "toggleFolderMode", function()
     usingFolder = not usingFolder
