@@ -7,7 +7,6 @@ local selected = {
 }
 
 local internal_opts = {
-    wait_length = 0.5,
     savedata = "~~/data",
     executor = "~~/tools",
     similarity = 45,
@@ -241,9 +240,7 @@ local function setProfile(searchType, context)
     if maxSimilarity >= internal_opts.similarity then 
         hasProfile = true
         original_volume = get_system_volume()
-        mp.add_timeout(internal_opts.wait_length, function()
-            setProperties(selected.profile)
-        end)
+        setProperties(selected.profile)
         if (context == "reload") then
             osd_print("Profile reloaded successfully..")
             return;
@@ -318,9 +315,7 @@ local function loadProfiles(context)
         profiles = utils.parse_json(data)
         file:close()
 
-        mp.add_timeout(internal_opts.wait_length, function()
-            setProfile("file", context)
-        end)
+        setProfile("file", context)
     end
 end
 
@@ -371,7 +366,7 @@ local function redoProfile()
     saveProfiles("redo")
 end
 
-loadProfiles()
+mp.register_event("file-loaded", function() loadProfiles() end)
 
 mp.register_event("shutdown", function()
     if (hasProfile) then set_system_volume(original_volume) end
