@@ -10,7 +10,7 @@ local internal_opts = {
     wait_length = 0.5,
     savedata = "~~/data",
     executor = "~~/tools",
-    similarity = 40,
+    similarity = 45,
     showMessages = true,
     externaltools = true
 }
@@ -43,10 +43,21 @@ local function get_system_volume()
     return math.floor(output)
 end
 
-local function osd_print(message)
+local function cleanupTitle(title)
+    title = title:gsub("%d+", "")
+    title = title:gsub("%b()", "")
+    title = title:gsub("%b[]", "")
+    title = title:gsub("%_", " ")
+    title = title:gsub("^%s*(.-)%s*$", "%1")
+    return title
+end
+
+local function osd_print(message, duration)
+    if (not duration) then duration = 3 end 
+    duration = duration * 1000
     if (internal_opts.showMessages) then 
         print(message)
-        mp.osd_message(message) 
+        mp.command('show-text "' .. message .. '" ' .. duration)
     end
 end
 
@@ -127,7 +138,7 @@ local function getSearchMethod(searchType)
         end
         compareFrom = parts[#parts]
     end
-    return compareFrom
+    return cleanupTitle(compareFrom)
 end
 
 local original_volume
@@ -139,6 +150,9 @@ end
 
 --[[https://gist.github.com/Badgerati/3261142]]
 local function calculateSimilarity(str1, str2)
+    str1 = str1:gsub("%s", "")
+    str2 = str2:gsub("%s", "")    
+    
     local len1 = string.len(str1)
     local len2 = string.len(str2)
     local matrix = {}
@@ -291,6 +305,8 @@ local function copyProfile()
             if (prop == "folder") then profiles[filename][prop] = usingFolder end
         end
     end
+    selected.profile = profiles[filename]
+    selected.name = filename
     saveProfiles()
 end
 
