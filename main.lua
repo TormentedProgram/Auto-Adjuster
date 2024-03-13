@@ -7,10 +7,9 @@ local selected = {
 }
 
 local internal_opts = {
-    wait_length = 0.5,
     savedata = "~~/data",
     executor = "~~/tools",
-    similarity = 40,
+    similarity = 45,
     showMessages = true,
     externaltools = true
 }
@@ -29,24 +28,63 @@ local properties = {
 local removedProfile = {}
 local hasProfile = false
 local usingFolder = false
-local original_top = mp.get_property_native("ontop")
-local function get_system_volume()
-    if (not internal_opts.externaltools) then return end
-    local executor = mp.command_native({"expand-path", internal_opts.executor .. "/svcl.exe"})
-    mp.set_property_native("ontop", true)
-    local file = io.popen(executor .. ' /Stdout /GetPercent "DefaultRenderDevice"')
-    local output = file:read('*all'):gsub("[\r\n]", "")
-    file:close()
-    mp.add_timeout(2, function()
-        mp.set_property_native("ontop", original_top)
+
+local original_top
+
+local function runPythonAsync(callback, arg1, arg2)
+    local script_dir = debug.getinfo(1).source:match("@?(.*/)")
+    local script_name = debug.getinfo(1, "S").source:match(".*/([^/\\]+)%.lua$")
+    local args = {"python", script_dir.."python/"..script_name..".py"}
+
+    if arg1 then table.insert(args, tostring(arg1)) end
+    if arg2 then table.insert(args, tostring(arg2)) end
+
+    local table = {
+        name = "subprocess",
+        args = args,
+        capture_stdout = true
+    }
+    local cmd = mp.command_native_async(table, function(success, result, error) 
+        if result.stdout then
+            local python_vars = utils.parse_json(result.stdout)
+            if (not python_vars or python_vars["nil"]) then
+                callback(nil)
+            else
+                callback(python_vars)
+            end
+        else
+            callback(nil)
+        end
     end)
-    return math.floor(output)
 end
 
-local function osd_print(message)
+local function runPythonSync(arg1,arg2)
+    local script_dir = debug.getinfo(1).source:match("@?(.*/)")
+    local script_name = debug.getinfo(1, "S").source:match(".*/([^/\\]+)%.lua$")
+    local command = "python " .. script_dir.."python/"..script_name .. ".py"
+
+    if arg1 then command = command .. " " .. tostring(arg1) end
+    if arg2 then command = command .. " " .. tostring(arg2) end
+
+    os.execute(command)
+end
+
+
+local function cleanupTitle(title)
+    title = title:gsub("%d+", "")
+    title = title:gsub("%b()", "")
+    title = title:gsub("%b[]", "")
+    title = title:gsub("%_", " ")
+    title = title:gsub("^%s*(.-)%s*$", "%1")
+    return title
+end
+
+local function osd_print(message, duration)
+    if (not duration) then duration = 3 end 
+    duration = duration * 1000
     if (internal_opts.showMessages) then 
         print(message)
-        mp.osd_message(message) 
+        mp.command('show-text "' .. message .. '" ' .. duration)
     end
 end
 
@@ -127,18 +165,15 @@ local function getSearchMethod(searchType)
         end
         compareFrom = parts[#parts]
     end
-    return compareFrom
+    return cleanupTitle(compareFrom)
 end
 
 local original_volume
-local function set_system_volume(volume)
-    if (not internal_opts.externaltools) then return end
-    local executor = mp.command_native({"expand-path", internal_opts.executor .. "/svcl.exe"})
-    os.execute(executor .. ' /SetVolume "DefaultRenderDevice" ' .. math.floor(volume))
-end
-
 --[[https://gist.github.com/Badgerati/3261142]]
 local function calculateSimilarity(str1, str2)
+    str1 = str1:gsub("%s", "")
+    str2 = str2:gsub("%s", "")    
+    
     local len1 = string.len(str1)
     local len2 = string.len(str2)
     local matrix = {}
@@ -200,7 +235,13 @@ local function setProperties(config)
     end
     for prop, value in pairs(config) do
         if properties[prop] == "special" then
-            if (prop == "ext_volume") then if (value ~= original_volume) then set_system_volume(value) end end
+            if (prop == "ext_volume") then 
+                if (value ~= original_volume) then 
+                    runPythonAsync(function(python) 
+                        --no
+                    end, "setvolume", value)
+                end 
+            end
             if (prop == "folder") then usingFolder = value end
         elseif properties[prop] == "number" then
             mp.set_property_number(prop, value)
@@ -226,10 +267,7 @@ local function setProfile(searchType, context)
     end
     if maxSimilarity >= internal_opts.similarity then 
         hasProfile = true
-        original_volume = get_system_volume()
-        mp.add_timeout(internal_opts.wait_length, function()
-            setProperties(selected.profile)
-        end)
+        setProperties(selected.profile)
         if (context == "reload") then
             osd_print("Profile reloaded successfully..")
             return;
@@ -287,10 +325,18 @@ local function copyProfile()
             profiles[filename][prop] = mp.get_property_native(prop)
         elseif propType == "special" then
             profiles[filename][prop] = mp.get_property_number(prop)
-            if (prop == "ext_volume") then profiles[filename][prop] = get_system_volume() end
+            if (prop == "ext_volume") then --not
+                runPythonAsync(function(python)
+                    if (python) then
+                        profiles[filename][prop] = tonumber(python["Volume"])
+                    end
+                end, "getvolume")
+            end
             if (prop == "folder") then profiles[filename][prop] = usingFolder end
         end
     end
+    selected.profile = profiles[filename]
+    selected.name = filename
     saveProfiles()
 end
 
@@ -302,9 +348,7 @@ local function loadProfiles(context)
         profiles = utils.parse_json(data)
         file:close()
 
-        mp.add_timeout(internal_opts.wait_length, function()
-            setProfile("file", context)
-        end)
+        setProfile("file", context)
     end
 end
 
@@ -355,11 +399,19 @@ local function redoProfile()
     saveProfiles("redo")
 end
 
-loadProfiles()
+runPythonAsync(function(python)
+    if (python) then
+        original_volume = tonumber(python["Volume"])
+    end
+end, "getvolume")
+original_top = mp.get_property_native("ontop")
 
-mp.register_event("shutdown", function()
-    if (hasProfile) then set_system_volume(original_volume) end
-    mp.set_property_native("ontop", original_top)
+mp.register_event("file-loaded", function() loadProfiles() end)
+
+mp.register_event("shutdown", function() --not
+    if (hasProfile) then 
+        runPythonSync("setvolume", original_volume) 
+    end
 end)
 
 mp.add_forced_key_binding("ctrl+shift+c", "saveProfile", function() copyProfile() end)
