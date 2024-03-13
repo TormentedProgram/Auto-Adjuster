@@ -1,1 +1,0 @@
-This file is just a example of what the script generates
