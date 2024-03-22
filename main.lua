@@ -17,34 +17,42 @@ local internal_opts = {
 local properties = {
     saturation = "number",
     folder = "special",
-    ext_volume = "special",
-    volume = "native",
+    ["ext-volume"] = "special",
+    volume = "number",
     brightness = "number",
     gamma = "number",
     contrast = "number",
-    vf = "native"
+    ["glsl-shaders"] = "native",
+    vf = "native",
 }
 
+local firstTime = true
 local removedProfile = {}
 local hasProfile = false
 local usingFolder = false
 
+local usingGuess = true
+local guessedTitle = ""
+
 local original_top
 
-local function runPythonAsync(callback, arg1, arg2)
-    local script_dir = debug.getinfo(1).source:match("@?(.*/)")
-    local script_name = debug.getinfo(1, "S").source:match(".*/([^/\\]+)%.lua$")
-    local args = {"python", script_dir.."python/"..script_name..".py"}
+local function runPythonAsync(callback, scriptName, arg1, arg2, arg3)
+    local script_dir = debug.getinfo(1).source:match("@?(.*/)"):gsub("\\", "/")
+    if (not scriptName) then scriptName = debug.getinfo(1, "S").source:match(".*/([^/\\]+)%.lua$") end  
+    print(script_dir.."python/"..scriptName..".py")
+    if arg1 then print(arg1) end
+    local args = {"python", script_dir.."python/"..scriptName..".py"}
 
-    if arg1 then table.insert(args, tostring(arg1)) end
-    if arg2 then table.insert(args, tostring(arg2)) end
+    if arg1 then table.insert(args, arg1) end
+    if arg2 then table.insert(args, arg2) end
+    if arg3 then table.insert(args, arg3) end
 
-    local table = {
+    local cmd_table = {
         name = "subprocess",
         args = args,
         capture_stdout = true
     }
-    local cmd = mp.command_native_async(table, function(success, result, error) 
+    local cmd = mp.command_native_async(cmd_table, function(success, result, error) 
         if result.stdout then
             local python_vars = utils.parse_json(result.stdout)
             if (not python_vars or python_vars["nil"]) then
@@ -69,7 +77,6 @@ local function runPythonSync(arg1,arg2)
     os.execute(command)
 end
 
-
 local function cleanupTitle(title)
     title = title:gsub("%d+", "")
     title = title:gsub("%b()", "")
@@ -81,11 +88,7 @@ end
 
 local function osd_print(message, duration)
     if (not duration) then duration = 3 end 
-    duration = duration * 1000
-    if (internal_opts.showMessages) then 
-        print(message)
-        mp.command('show-text "' .. message .. '" ' .. duration)
-    end
+    mp.osd_message(message, duration)
 end
 
 local function validatePath(path)
@@ -148,6 +151,7 @@ local function json_format(tbl)
 end
 
 local function getSearchMethod(searchType)
+    if usingGuess then return cleanupTitle(guessedTitle) end
     local compareFrom
     if (not searchType) then searchType = "file" end
     if (usingFolder) then searchType = "folder" end
@@ -218,6 +222,20 @@ local function calculateSimilarity(str1, str2)
     return similarity
 end
 
+local function getEstimatedTitle(callback)
+    dir, filename = utils.split_path(mp.get_property("path"))
+    runPythonAsync(function(python)
+        if (python) then
+            guessedTitle = cleanupTitle(tostring(python["myGuess"].title))
+            print("Guessed title:", guessedTitle)
+            if callback then
+                callback(guessedTitle)
+            end
+        end
+    end, "guesstimate", "guessIt", dir..filename)
+end
+
+
 local function setProperties(config)
     if not config then
         config = {}
@@ -228,18 +246,18 @@ local function setProperties(config)
                 config[prop] = ""
             elseif propType == "special" then
                 config[prop] = nil
-                if (prop == "ext_volume") then config[prop] = original_volume end
+                if (prop == "ext-volume") then config[prop] = original_volume end
                 if (prop == "folder") then config[prop] = false end
             end
         end
     end
     for prop, value in pairs(config) do
         if properties[prop] == "special" then
-            if (prop == "ext_volume") then 
+            if (prop == "ext-volume") then 
                 if (value ~= original_volume) then 
                     runPythonAsync(function(python) 
                         --no
-                    end, "setvolume", value)
+                    end, nil, "setvolume", tostring(value))
                 end 
             end
             if (prop == "folder") then usingFolder = value end
@@ -320,24 +338,24 @@ local function copyProfile()
     profiles[filename] = {}
     for prop, propType in pairs(properties) do
         if propType == "number" then
-            profiles[filename][prop] = mp.get_property_number(prop)
+            profiles[filename][prop] = math.floor(tonumber(mp.get_property_number(prop)))
         elseif propType == "native" then
             profiles[filename][prop] = mp.get_property_native(prop)
         elseif propType == "special" then
             profiles[filename][prop] = mp.get_property_number(prop)
-            if (prop == "ext_volume") then --not
+            if (prop == "ext-volume") then --not
                 runPythonAsync(function(python)
                     if (python) then
-                        profiles[filename][prop] = tonumber(python["Volume"])
+                        profiles[filename][prop] = math.floor(tonumber(python["Volume"]))
+                        selected.profile = profiles[filename]
+                        selected.name = filename
+                        saveProfiles()
                     end
-                end, "getvolume")
+                end, nil, "getvolume")
             end
             if (prop == "folder") then profiles[filename][prop] = usingFolder end
         end
     end
-    selected.profile = profiles[filename]
-    selected.name = filename
-    saveProfiles()
 end
 
 local function loadProfiles(context)
@@ -401,16 +419,30 @@ end
 
 runPythonAsync(function(python)
     if (python) then
-        original_volume = tonumber(python["Volume"])
+        original_volume = python["Volume"]
     end
-end, "getvolume")
+end, nil, "getvolume")
 original_top = mp.get_property_native("ontop")
 
-mp.register_event("file-loaded", function() loadProfiles() end)
+mp.register_event("file-loaded", function() 
+    if firstTime then
+        if usingGuess then
+            getEstimatedTitle(function(title)
+                print("WHORE"..title)
+                loadProfiles()
+            end)
+        else
+            loadProfiles() 
+        end
+        firstTime = false 
+    end
+end)
 
 mp.register_event("shutdown", function() --not
     if (hasProfile) then 
-        runPythonSync("setvolume", original_volume) 
+        if (original_volume) then
+            runPythonSync("setvolume", original_volume) 
+        end
     end
 end)
 
@@ -420,7 +452,13 @@ mp.add_forced_key_binding("ctrl+shift+l", "clearProfiles", function() clearProfi
 mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", function() undoProfile() end)
 mp.add_forced_key_binding("ctrl+shift+y", "redoProfile", function() redoProfile() end)
 
+mp.add_forced_key_binding("ctrl+shift+g", "toggleGuessMode", function()
+    usingGuess = not usingGuess
+    if usingGuess then getEstimatedTitle() end
+    osd_print("Guess Title Mode ["..tostring(usingGuess).."]")
+end)
+
 mp.add_forced_key_binding("ctrl+shift+f", "toggleFolderMode", function()
     usingFolder = not usingFolder
-    osd_print("Using folder setting = "..tostring(usingFolder))
+    osd_print("Folder Mode ["..tostring(usingFolder).."]")
 end)

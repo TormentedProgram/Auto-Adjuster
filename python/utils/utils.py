@@ -2,7 +2,8 @@
 import os
 import sys
 
-key_path = os.path.join(os.path.join(os.path.expanduser('~'), 'Desktop'), 'key.txt')
+sys.dont_write_bytecode = True
+key_path = os.path.join(os.getenv('LOCALAPPDATA'), 'mpv', 'keys', 'key.txt')
 
 if os.path.exists(key_path):
     with open(key_path, 'r') as keyfile:
@@ -22,7 +23,7 @@ def install_package(package):
     subprocess.run([sys.executable, "-m", "pip", "install", package])
     return True
 
-def import_or_install(package_name):
+def impkg(package_name):
     try:
         package = importlib.import_module(package_name)
     except ImportError:
@@ -34,7 +35,7 @@ def import_or_install(package_name):
             return None  # Return None if installation failed
     return package
 
-requests = import_or_install('requests')
+requests = impkg('requests')
 
 def anilist_call(query, variables, validate=False):
     url = 'https://graphql.anilist.co'

@@ -8,11 +8,11 @@ utils_dir = os.path.join(current_dir, 'utils')
 sys.path.append(current_dir)
 sys.path.append(utils_dir)
 
-import tortils
+import utils
 
-tortils.import_or_install('pycaw')
-pycaw = tortils.import_or_install('pycaw.pycaw')
-json = tortils.import_or_install('json')
+utils.impkg('pycaw')
+pycaw = utils.impkg('pycaw.pycaw')
+json = utils.impkg('json')
 
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
