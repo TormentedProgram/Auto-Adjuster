@@ -22,6 +22,7 @@ local properties = {
     gamma = "number",
     contrast = "number",
     vf = "native",
+    af = "native",
     glsl_dash_shaders = "native"
 }
 
