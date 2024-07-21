@@ -7,11 +7,10 @@ local selected = {
 }
 
 local internal_opts = {
-    savedata = "~~/data",
-    executor = "~~/tools",
-    similarity = 45,
+    savedata = "~~/script-opts/auto-adjuster",
+    similarity = 40,
     showMessages = true,
-    externaltools = true
+    dash_subtitute = "_dash_"
 }
 
 local properties = {
@@ -22,7 +21,8 @@ local properties = {
     brightness = "number",
     gamma = "number",
     contrast = "number",
-    vf = "native"
+    vf = "native",
+    glsl_dash_shaders = "native"
 }
 
 local removedProfile = {}
@@ -221,6 +221,7 @@ end
 local function setProperties(config)
     if not config then
         config = {}
+        
         for prop, propType in pairs(properties) do
             if propType == "number" then
                 config[prop] = 0
@@ -234,6 +235,7 @@ local function setProperties(config)
         end
     end
     for prop, value in pairs(config) do
+        prop = prop:gsub("-", internal_opts.dash_subtitute)
         if properties[prop] == "special" then
             if (prop == "ext_volume") then 
                 if (value ~= original_volume) then 
@@ -246,6 +248,7 @@ local function setProperties(config)
         elseif properties[prop] == "number" then
             mp.set_property_number(prop, value)
         elseif properties[prop] == "native" then
+            prop = prop:gsub(internal_opts.dash_subtitute, "-")
             mp.set_property_native(prop, value)
         end
     end
@@ -272,7 +275,7 @@ local function setProfile(searchType, context)
             osd_print("Profile reloaded successfully..")
             return;
         end
-        osd_print("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. selected.name)
+        osd_print("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. selected.name, 2)
     else
         if (searchType == "file") then
             setProfile("folder")
@@ -285,6 +288,7 @@ end
 
 local function saveProfiles(context)
     if (not context) then context = "undefined" end
+    
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
     local file = io.open(validatePath(filePath), "r")
     local existingData = {}
@@ -319,22 +323,38 @@ local function copyProfile()
     local filename = getSearchMethod()
     profiles[filename] = {}
     for prop, propType in pairs(properties) do
+        prop = prop:gsub(internal_opts.dash_subtitute, "-")
         if propType == "number" then
-            profiles[filename][prop] = mp.get_property_number(prop)
+            local value = mp.get_property_number(prop)
+            if value ~= nil then
+              profiles[filename][prop] = value
+            end
         elseif propType == "native" then
-            profiles[filename][prop] = mp.get_property_native(prop)
-        elseif propType == "special" then
-            profiles[filename][prop] = mp.get_property_number(prop)
-            if (prop == "ext_volume") then --not
-                runPythonAsync(function(python)
-                    if (python) then
-                        profiles[filename][prop] = tonumber(python["Volume"])
+            local value = mp.get_property_native(prop)
+            if value ~= nil then
+                if type(value) == "table" then
+                    if #value > 0 then
+                        profiles[filename][prop] = value
                     end
+                else
+                    profiles[filename][prop] = value
+                end
+            end
+        elseif propType == "special" then
+            local value = mp.get_property_number(prop)
+            if value ~= nil then
+              profiles[filename][prop] = value
+              if (prop == "ext_volume") then
+                runPythonAsync(function(python)
+                  if (python) then
+                    profiles[filename][prop] = tonumber(python["Volume"])
+                  end
                 end, "getvolume")
+              end
             end
             if (prop == "folder") then profiles[filename][prop] = usingFolder end
+          end
         end
-    end
     selected.profile = profiles[filename]
     selected.name = filename
     saveProfiles()
