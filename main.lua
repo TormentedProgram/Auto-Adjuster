@@ -10,21 +10,44 @@ local internal_opts = {
     savedata = "~~/script-opts/auto-adjuster",
     similarity = 40,
     showMessages = true,
-    dash_subtitute = "_dash_"
 }
 
-local properties = {
-    saturation = "number",
-    folder = "special",
-    ext_volume = "special",
-    volume = "native",
-    brightness = "number",
-    gamma = "number",
-    contrast = "number",
-    vf = "native",
-    af = "native",
-    glsl_dash_shaders = "native"
+local default_properties = {
+    saturation = 0,
+    folder = false,
+    volume = 100,
+    brightness = 0,
+    gamma = 0,
+    contrast = 0,
 }
+
+untoggledProperties = nil
+
+local properties = {
+    ["saturation"] = "number",
+    ["folder"] = "special",
+    ["ext_volume"] = "special",
+    ["volume"] = "native",
+    ["brightness"] = "number",
+    ["gamma"] = "number",
+    ["contrast"] = "number",
+    ["vf"] = "native",
+    ["af"] = "native",
+    ["glsl-shaders"] = "native",
+    ["canSkip"] = "custom"
+}
+
+local keymap = {
+    ["toggleProfile()"] = "ctrl+shift+t",
+    ["copyProfile()"] = "ctrl+shift+c",
+    ["loadProfiles('reload')"] = "ctrl+shift+r",
+    ["clearProfiles()"] = "ctrl+shift+l",
+    ["undoProfile()"] = "ctrl+shift+z",
+    ["redoProfile()"] = "ctrl+shift+y"
+}
+
+local triggeredDeletionWarning = false
+local triggeredUndoWarning = false
 
 local removedProfile = {}
 local hasProfile = false
@@ -32,7 +55,54 @@ local usingFolder = false
 
 local original_top
 
-local function runPythonAsync(callback, arg1, arg2)
+function printTable(t, indent)
+    indent = indent or 0
+    local indentString = string.rep(" ", indent)
+    
+    if type(t) ~= "table" then
+        print(indentString .. tostring(t))
+        return
+    end
+
+    for key, value in pairs(t) do
+        if type(value) == "table" then
+            print(indentString .. tostring(key) .. ":")
+            printTable(value, indent + 4)
+        else
+            print(indentString .. tostring(key) .. ": " .. tostring(value))
+        end
+    end
+end
+
+function osd_print(message, duration, indent, doPrint)
+    if (not indent) then indent = 0 end 
+    if (not doPrint) then doPrint = true end 
+    if (not duration) then duration = 3 end 
+    if type(message) == "table" then
+        local indentString = string.rep(" ", indent)
+        local tableString = ""
+
+        for key, value in pairs(message) do
+            if type(value) == "table" then
+                tableString = tableString .. indentString .. tostring(key) .. ":\n" .. osd_print(value, duration, indent + 4, false)
+            else
+                tableString = tableString .. indentString .. tostring(key) .. ": " .. tostring(value) .. "\n"
+            end
+        end
+        message = tableString
+    end
+    if doPrint then
+        duration = duration * 1000
+        if (internal_opts.showMessages) then 
+            print(message)
+            mp.command('show-text "' .. message .. '" ' .. duration)
+        end
+    else
+        return message
+    end
+end
+
+function runPythonAsync(callback, arg1, arg2)
     local script_dir = debug.getinfo(1).source:match("@?(.*/)")
     local script_name = debug.getinfo(1, "S").source:match(".*/([^/\\]+)%.lua$")
     local args = {"python", script_dir.."python/"..script_name..".py"}
@@ -40,26 +110,31 @@ local function runPythonAsync(callback, arg1, arg2)
     if arg1 then table.insert(args, tostring(arg1)) end
     if arg2 then table.insert(args, tostring(arg2)) end
 
+    osd_print(args, 10)
+
     local table = {
         name = "subprocess",
         args = args,
         capture_stdout = true
     }
-    local cmd = mp.command_native_async(table, function(success, result, error) 
-        if result.stdout then
+    mp.command_native_async(table, function(success, result, error)
+        osd_print("Python script failed: " .. (result.stderr or "unknown error"), 10)
+        if success and result.stdout then
             local python_vars = utils.parse_json(result.stdout)
-            if (not python_vars or python_vars["nil"]) then
+            osd_print("GRAH "..result.stdout)
+            if not python_vars or python_vars["nil"] then
                 callback(nil)
             else
                 callback(python_vars)
             end
         else
+            osd_print("Python script failed: " .. (result.stderr or "unknown error"), 10)
             callback(nil)
         end
     end)
 end
 
-local function runPythonSync(arg1,arg2)
+function runPythonSync(arg1,arg2)
     local script_dir = debug.getinfo(1).source:match("@?(.*/)")
     local script_name = debug.getinfo(1, "S").source:match(".*/([^/\\]+)%.lua$")
     local command = "python " .. script_dir.."python/"..script_name .. ".py"
@@ -71,7 +146,7 @@ local function runPythonSync(arg1,arg2)
 end
 
 
-local function cleanupTitle(title)
+function cleanupTitle(title)
     title = title:gsub("%d+", "")
     title = title:gsub("%b()", "")
     title = title:gsub("%b[]", "")
@@ -80,16 +155,7 @@ local function cleanupTitle(title)
     return title
 end
 
-local function osd_print(message, duration)
-    if (not duration) then duration = 3 end 
-    duration = duration * 1000
-    if (internal_opts.showMessages) then 
-        print(message)
-        mp.command('show-text "' .. message .. '" ' .. duration)
-    end
-end
-
-local function validatePath(path)
+function validatePath(path)
     local directory = path:match("(.+)/.+")
     if not directory then
         return
@@ -110,7 +176,7 @@ local function validatePath(path)
     return mp.command_native({"expand-path", "~~"})
 end
 
-local function json_format(tbl)
+function json_format(tbl)
     local json_str = utils.format_json(tbl)
     local indent_char = "    "
     local indent_level = 0
@@ -148,7 +214,7 @@ local function json_format(tbl)
     return beautified_str
 end
 
-local function getSearchMethod(searchType)
+function getSearchMethod(searchType)
     local compareFrom
     if (not searchType) then searchType = "file" end
     if (usingFolder) then searchType = "folder" end
@@ -171,7 +237,7 @@ end
 
 local original_volume
 --[[https://gist.github.com/Badgerati/3261142]]
-local function calculateSimilarity(str1, str2)
+function calculateSimilarity(str1, str2)
     str1 = str1:gsub("%s", "")
     str2 = str2:gsub("%s", "")    
     
@@ -219,7 +285,7 @@ local function calculateSimilarity(str1, str2)
     return similarity
 end
 
-local function setProperties(config)
+function setProperties(config)
     if not config then
         config = {}
         
@@ -232,11 +298,12 @@ local function setProperties(config)
                 config[prop] = nil
                 if (prop == "ext_volume") then config[prop] = original_volume end
                 if (prop == "folder") then config[prop] = false end
+            elseif propType == "custom" then
+                config[prop] = nil
             end
         end
     end
     for prop, value in pairs(config) do
-        prop = prop:gsub("-", internal_opts.dash_subtitute)
         if properties[prop] == "special" then
             if (prop == "ext_volume") then 
                 if (value ~= original_volume) then 
@@ -248,14 +315,15 @@ local function setProperties(config)
             if (prop == "folder") then usingFolder = value end
         elseif properties[prop] == "number" then
             mp.set_property_number(prop, value)
+        elseif properties[prop] == "custom" then
+            mp.set_property("user-data/Auto-Adjuster/" .. prop, value)
         elseif properties[prop] == "native" then
-            prop = prop:gsub(internal_opts.dash_subtitute, "-")
             mp.set_property_native(prop, value)
         end
     end
 end
 
-local function setProfile(searchType, context)
+function setProfile(searchType, context)
     if (not context) then context = "undefined" end
     if (not searchType) then searchType = "file" end
     local compareFrom = getSearchMethod(searchType)
@@ -277,6 +345,7 @@ local function setProfile(searchType, context)
             return;
         end
         osd_print("(Likeness: " .. maxSimilarity .. "%) Profile set to " .. selected.name, 2)
+        profileActive = true
     else
         if (searchType == "file") then
             setProfile("folder")
@@ -287,7 +356,45 @@ local function setProfile(searchType, context)
     end
 end
 
-local function saveProfiles(context)
+function setupBinds()
+    local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/keybinds.json"})
+    local file = io.open(validatePath(filePath), "r")
+
+    if file then
+        local jsonData = file:read("*all")
+        keymap = utils.parse_json(jsonData)
+        file:close()
+    else
+        file = io.open(validatePath(filePath), "w")
+        if file then
+            local saveData = json_format(keymap)
+            file:write(saveData)
+            file:close()
+
+            file = io.open(validatePath(filePath), "r")
+            if file then
+                local jsonData = file:read("*all")
+                keymap = utils.parse_json(jsonData)
+                file:close()
+            end
+        end
+    end
+
+    for func, keybind in pairs(keymap) do
+        mp.add_forced_key_binding(keybind, func, function() load(func)() end)
+    end
+
+    local keys = {'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'}
+    for idx, key in ipairs(keys) do
+        local key_combination = "ctrl+shift+"..key
+        local function_name = "toggleSpecialSettings("..key..")"
+        mp.add_forced_key_binding(key_combination, function_name, function() 
+            load("toggleSpecialSettings("..idx..")")() 
+        end)
+    end
+end
+
+function saveProfiles(context)
     if (not context) then context = "undefined" end
     
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
@@ -320,11 +427,11 @@ local function saveProfiles(context)
     end
 end
 
-local function copyProfile()
+function copyProfile(context)
+    if (not context) then context = "undefined" end
     local filename = getSearchMethod()
     profiles[filename] = {}
     for prop, propType in pairs(properties) do
-        prop = prop:gsub(internal_opts.dash_subtitute, "-")
         if propType == "number" then
             local value = mp.get_property_number(prop)
             if value ~= nil then
@@ -341,6 +448,14 @@ local function copyProfile()
                     profiles[filename][prop] = value
                 end
             end
+        elseif propType == "custom" then
+            local value = mp.get_property("user-data/Auto-Adjuster/" .. prop)
+            if value ~= nil then
+                value = utils.parse_json(value)
+            end
+            if value ~= nil then
+                profiles[filename][prop] = value
+            end
         elseif propType == "special" then
             local value = mp.get_property_number(prop)
             if value ~= nil then
@@ -356,13 +471,19 @@ local function copyProfile()
             if (prop == "folder") then profiles[filename][prop] = usingFolder end
           end
         end
-    selected.profile = profiles[filename]
-    selected.name = filename
-    saveProfiles()
+        
+    if context == "undefined" then
+        selected.profile = profiles[filename]
+        selected.name = filename
+        saveProfiles()
+    elseif context == "return" then
+        return profiles[filename]
+    end
 end
 
-local function loadProfiles(context)
+function loadProfiles(context)
     if (not context) then context = "undefined" end
+    setupBinds()
     local file = io.open(validatePath(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})), "r")
     if file then
         local data = file:read("*all")
@@ -373,16 +494,31 @@ local function loadProfiles(context)
     end
 end
 
-local function clearProfiles()
+function clearProfiles()
+    if not triggeredDeletionWarning then
+        triggeredDeletionWarning = true
+        osd_print("This will erase all profiles!, repeat keybind to proceed...", 3)
+        return
+    end
+
     osd_print("Cleared + backed up all profiles")
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
     local backupFilePath = filePath .. "_backup"
     os.rename(filePath, backupFilePath)
     profiles = {}
+    triggeredDeletionWarning = false
     setProperties()
 end
 
-local function undoProfile()
+function undoProfile()
+    if not triggeredUndoWarning then
+        triggeredUndoWarning = true
+        osd_print("This will undo the current profile!, repeat keybind to proceed...", 3)
+        return
+    end
+
+    triggeredUndoWarning = false
+
     local filename = selected.name
     local filePath = mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})
     local file = io.open(validatePath(filePath), "r")
@@ -414,7 +550,7 @@ local function undoProfile()
     end
 end
 
-local function redoProfile()
+function redoProfile()
     local filename = selected.name
     profiles[filename] = removedProfile
     saveProfiles("redo")
@@ -435,13 +571,58 @@ mp.register_event("shutdown", function() --not
     end
 end)
 
-mp.add_forced_key_binding("ctrl+shift+c", "saveProfile", function() copyProfile() end)
-mp.add_forced_key_binding("ctrl+shift+r", "reloadProfiles", function() loadProfiles("reload") end)
-mp.add_forced_key_binding("ctrl+shift+l", "clearProfiles", function() clearProfiles() end)
-mp.add_forced_key_binding("ctrl+shift+z", "undoProfile", function() undoProfile() end)
-mp.add_forced_key_binding("ctrl+shift+y", "redoProfile", function() redoProfile() end)
+profileActive = false
+function toggleProfile()
+    if profileActive then
+        osd_print("Adjuster Toggled Off",1)
+        untoggledProperties = copyProfile("return")
+        setProperties()
+        setProperties(default_properties)
+        profileActive = false
+    else
+        osd_print("Adjuster Toggled On",1)
+        showMsgOriginal = internal_opts.showMessages
+        internal_opts.showMessages = false
+        if untoggledProperties ~= nil then
+            setProperties(untoggledProperties)
+        else
+            loadProfiles("reload")
+        end
+        internal_opts.showMessages = showMsgOriginal
+        profileActive = true
+    end
+end
 
-mp.add_forced_key_binding("ctrl+shift+f", "toggleFolderMode", function()
-    usingFolder = not usingFolder
-    osd_print("Using folder setting = "..tostring(usingFolder))
-end)
+function tobool(value)
+    if value == nil then
+        return false
+    end
+    if type(value) == "boolean" then
+        return value
+    end
+    if type(value) == "string" then
+        return value == "true"
+    end
+    return false
+end
+
+function toggleSpecialSettings(num)
+    if num == 1 then
+        usingFolder = not usingFolder
+        osd_print("Current value of folder mode " .. tostring(usingFolder))
+    elseif num == 2 then
+        local current_value = mp.get_property("user-data/Auto-Adjuster/canSkip")
+
+        real_value = false
+        if current_value ~= nil then
+            real_value = utils.parse_json(current_value)
+        end
+
+        local new_value = not tobool(real_value)
+        mp.set_property("user-data/Auto-Adjuster/canSkip", tostring(new_value))
+
+        osd_print("Current value of canSkip: " .. tostring(new_value))
+    else
+        osd_print("No special setting for the key combo..")
+    end
+end
