@@ -8,7 +8,7 @@ local selected = {
 
 local internal_opts = {
     savedata = "~~/script-opts/auto-adjuster",
-    similarity = 40,
+    similarity = 60,
     showMessages = true,
 }
 
@@ -30,6 +30,8 @@ local properties = {
     ["volume"] = "native",
     ["brightness"] = "number",
     ["gamma"] = "number",
+    ["sub-scale"] = "number",
+    ["sid"] = "number",
     ["contrast"] = "number",
     ["vf"] = "native",
     ["af"] = "native",
@@ -294,6 +296,8 @@ function setProperties(config)
                 config[prop] = 0
             elseif propType == "native" then
                 config[prop] = ""
+            elseif propType == "" then
+                config[prop] = ""
             elseif propType == "special" then
                 config[prop] = nil
                 if (prop == "ext_volume") then config[prop] = original_volume end
@@ -319,6 +323,8 @@ function setProperties(config)
             mp.set_property("user-data/Auto-Adjuster/" .. prop, value)
         elseif properties[prop] == "native" then
             mp.set_property_native(prop, value)
+        elseif properties[prop] == "" then
+            mp.set_property(prop, value)
         end
     end
 end
@@ -434,6 +440,15 @@ function copyProfile(context)
     for prop, propType in pairs(properties) do
         if propType == "number" then
             local value = mp.get_property_number(prop)
+            if value ~= nil then
+                local rounded_value = tonumber(string.format("%.2f", value))
+                if rounded_value == math.floor(rounded_value * 10) / 10 then
+                    rounded_value = tonumber(string.format("%.1f", rounded_value))
+                end
+                profiles[filename][prop] = rounded_value
+            end
+        elseif propType == "" then
+            local value = mp.get_property(prop)
             if value ~= nil then
               profiles[filename][prop] = value
             end
@@ -573,23 +588,27 @@ end)
 
 profileActive = false
 function toggleProfile()
-    if profileActive then
-        osd_print("Adjuster Toggled Off",1)
-        untoggledProperties = copyProfile("return")
-        setProperties()
-        setProperties(default_properties)
-        profileActive = false
-    else
-        osd_print("Adjuster Toggled On",1)
-        showMsgOriginal = internal_opts.showMessages
-        internal_opts.showMessages = false
-        if untoggledProperties ~= nil then
-            setProperties(untoggledProperties)
+    if hasProfile then
+        if profileActive then
+            osd_print("[VFX OFF]",1)
+            untoggledProperties = copyProfile("return")
+            setProperties()
+            setProperties(default_properties)
+            profileActive = false
         else
-            loadProfiles("reload")
+            osd_print("[VFX ON]",1)
+            showMsgOriginal = internal_opts.showMessages
+            internal_opts.showMessages = false
+            if untoggledProperties ~= nil then
+                setProperties(untoggledProperties)
+            else
+                loadProfiles("reload")
+            end
+            internal_opts.showMessages = showMsgOriginal
+            profileActive = true
         end
-        internal_opts.showMessages = showMsgOriginal
-        profileActive = true
+    else
+        osd_print("[NO VFX PROFILE FOUND]",3)
     end
 end
 
@@ -609,7 +628,7 @@ end
 function toggleSpecialSettings(num)
     if num == 1 then
         usingFolder = not usingFolder
-        osd_print("Current value of folder mode " .. tostring(usingFolder))
+        osd_print("[FOLDER-MODE: " .. tostring(usingFolder).. "]")
     elseif num == 2 then
         local current_value = mp.get_property("user-data/Auto-Adjuster/canSkip")
 
@@ -621,8 +640,6 @@ function toggleSpecialSettings(num)
         local new_value = not tobool(real_value)
         mp.set_property("user-data/Auto-Adjuster/canSkip", tostring(new_value))
 
-        osd_print("Current value of canSkip: " .. tostring(new_value))
-    else
-        osd_print("No special setting for the key combo..")
+        osd_print("[SKIP-CHAPTERS: " .. tostring(new_value).. "]")
     end
 end
