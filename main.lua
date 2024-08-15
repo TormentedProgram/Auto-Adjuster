@@ -1,4 +1,5 @@
 local utils = require 'mp.utils'
+local JSON = require 'JSON'
 local profiles = {}
 
 local selected = {
@@ -122,7 +123,7 @@ function runPythonAsync(callback, arg1, arg2)
     mp.command_native_async(table, function(success, result, error)
         osd_print("Python script failed: " .. (result.stderr or "unknown error"), 10)
         if success and result.stdout then
-            local python_vars = utils.parse_json(result.stdout)
+            local python_vars = JSON:decode(result.stdout)
             osd_print("GRAH "..result.stdout)
             if not python_vars or python_vars["nil"] then
                 callback(nil)
@@ -147,14 +148,36 @@ function runPythonSync(arg1,arg2)
     os.execute(command)
 end
 
+function cleanupTitle(name)
+    local start, finish, raw, title
+    raw = name
 
-function cleanupTitle(title)
-    title = title:gsub("%d+", "")
-    title = title:gsub("%b()", "")
-    title = title:gsub("%b[]", "")
-    title = title:gsub("%_", " ")
-    title = title:gsub("^%s*(.-)%s*$", "%1")
+    if finish then
+        raw = string.sub(name, start + 1, finish):split('(')[1]
+    end
+
+    title = string.gsub(raw, "^ -", "")
+    
+    if not string.find(title, " ") and string.find(title, "%.") then
+        title = string.gsub(title, "%.", " ")
+    end
+    
+    title = string.gsub(title, "_", " ")
+    title = string.gsub(title, "[%[%(%(_%- ]$", "")
+    title = string.match(title, "^%s*(.-)%s*$")
+
     return title
+end
+
+function string.split(inputstr, sep)
+    if sep == nil then
+        sep = "%s"
+    end
+    local t = {}
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+        table.insert(t, str)
+    end
+    return t
 end
 
 function validatePath(path)
@@ -176,44 +199,6 @@ function validatePath(path)
         return path
     end
     return mp.command_native({"expand-path", "~~"})
-end
-
-function json_format(tbl)
-    local json_str = utils.format_json(tbl)
-    local indent_char = "    "
-    local indent_level = 0
-    local in_string = false
-
-    local function insert_whitespace()
-        return "\n" .. string.rep(indent_char, indent_level)
-    end
-
-    local beautified_str = ""
-    for i = 1, #json_str do
-        local char = string.sub(json_str, i, i)
-
-        if char == '"' then
-            in_string = not in_string
-        end
-
-        if not in_string then
-            if char == "{" or char == "[" then
-                indent_level = indent_level + 1
-                beautified_str = beautified_str .. char .. insert_whitespace()
-            elseif char == "}" or char == "]" then
-                indent_level = indent_level - 1
-                beautified_str = beautified_str .. insert_whitespace() .. char
-            elseif char == "," then
-                beautified_str = beautified_str .. char .. insert_whitespace()
-            else
-                beautified_str = beautified_str .. char
-            end
-        else
-            beautified_str = beautified_str .. char
-        end
-    end
-
-    return beautified_str
 end
 
 function getSearchMethod(searchType)
@@ -368,19 +353,19 @@ function setupBinds()
 
     if file then
         local jsonData = file:read("*all")
-        keymap = utils.parse_json(jsonData)
+        keymap = JSON:decode(jsonData)
         file:close()
     else
         file = io.open(validatePath(filePath), "w")
         if file then
-            local saveData = json_format(keymap)
+            local saveData = JSON:encode_pretty(keymap)
             file:write(saveData)
             file:close()
 
             file = io.open(validatePath(filePath), "r")
             if file then
                 local jsonData = file:read("*all")
-                keymap = utils.parse_json(jsonData)
+                keymap = JSON:decode(jsonData)
                 file:close()
             end
         end
@@ -409,7 +394,7 @@ function saveProfiles(context)
     
     if file then
         local jsonData = file:read("*all")
-        existingData = utils.parse_json(jsonData)
+        existingData = JSON:decode(jsonData)
         file:close()
     end
     
@@ -417,7 +402,7 @@ function saveProfiles(context)
         existingData[k] = v
     end
     
-    local saveData = json_format(existingData)
+    local saveData = JSON:encode_pretty(existingData)
     file = io.open(validatePath(filePath), "w")
     
     if file then
@@ -466,7 +451,7 @@ function copyProfile(context)
         elseif propType == "custom" then
             local value = mp.get_property("user-data/Auto-Adjuster/" .. prop)
             if value ~= nil then
-                value = utils.parse_json(value)
+                value = JSON:decode(value)
             end
             if value ~= nil then
                 profiles[filename][prop] = value
@@ -502,7 +487,7 @@ function loadProfiles(context)
     local file = io.open(validatePath(mp.command_native({"expand-path", internal_opts.savedata .. "/profiles.json"})), "r")
     if file then
         local data = file:read("*all")
-        profiles = utils.parse_json(data)
+        profiles = JSON:decode(data)
         file:close()
 
         setProfile("file", context)
@@ -541,7 +526,7 @@ function undoProfile()
     
     if file then
         local jsonData = file:read("*all")
-        existingData = utils.parse_json(jsonData)
+        existingData = JSON:decode(jsonData)
         file:close()
     end
     
@@ -553,7 +538,7 @@ function undoProfile()
     
     removedProfile = profiles[filename]
     profiles[filename] = nil
-    local saveData = json_format(existingData)
+    local saveData = JSON:encode_pretty(existingData)
     file = io.open(validatePath(filePath), "w")
     
     if file then
@@ -634,7 +619,7 @@ function toggleSpecialSettings(num)
 
         real_value = false
         if current_value ~= nil then
-            real_value = utils.parse_json(current_value)
+            real_value = JSON:decode(current_value)
         end
 
         local new_value = not tobool(real_value)
