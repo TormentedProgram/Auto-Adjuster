@@ -37,16 +37,20 @@ local properties = {
     ["vf"] = "native",
     ["af"] = "native",
     ["glsl-shaders"] = "native",
-    ["canSkip"] = "custom"
+    ["canSkip"] = "custom",
+    ["anilistUpdate"] = "custom"
 }
 
 local keymap = {
-    ["toggleProfile()"] = "ctrl+shift+t",
-    ["copyProfile()"] = "ctrl+shift+c",
-    ["loadProfiles('reload')"] = "ctrl+shift+r",
-    ["clearProfiles()"] = "ctrl+shift+l",
-    ["undoProfile()"] = "ctrl+shift+z",
-    ["redoProfile()"] = "ctrl+shift+y"
+    regularBinds = {
+        ["toggleProfile()"] = "ctrl+shift+t",
+        ["copyProfile()"] = "ctrl+shift+c",
+        ["loadProfiles('reload')"] = "ctrl+shift+r",
+        ["clearProfiles()"] = "ctrl+shift+l",
+        ["undoProfile()"] = "ctrl+shift+z",
+        ["redoProfile()"] = "ctrl+shift+y",
+    },
+    customBinds = {"a", "s", "d", "f", "g", "h", "j", "k", "l"}
 }
 
 local triggeredDeletionWarning = false
@@ -371,12 +375,11 @@ function setupBinds()
         end
     end
 
-    for func, keybind in pairs(keymap) do
+    for func, keybind in pairs(keymap.regularBinds) do
         mp.add_forced_key_binding(keybind, func, function() load(func)() end)
     end
 
-    local keys = {'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'}
-    for idx, key in ipairs(keys) do
+    for idx, key in ipairs(keymap.customBinds) do
         local key_combination = "ctrl+shift+"..key
         local function_name = "toggleSpecialSettings("..key..")"
         mp.add_forced_key_binding(key_combination, function_name, function() 
@@ -626,5 +629,17 @@ function toggleSpecialSettings(num)
         mp.set_property("user-data/Auto-Adjuster/canSkip", tostring(new_value))
 
         osd_print("[SKIP-CHAPTERS: " .. tostring(new_value).. "]")
+    elseif num == 3 then
+        local current_value = mp.get_property("user-data/Auto-Adjuster/anilistUpdate")
+
+        real_value = false
+        if current_value ~= nil then
+            real_value = JSON:decode(current_value)
+        end
+
+        local new_value = not tobool(real_value)
+        mp.set_property("user-data/Auto-Adjuster/anilistUpdate", tostring(new_value))
+
+        osd_print("[ANILIST-UPDATE: " .. tostring(new_value).. "]")
     end
 end
