@@ -33,6 +33,7 @@ local properties = {
     ["gamma"] = "number",
     ["sub-scale"] = "number",
     ["sid"] = "number",
+    ["sub-delay"] = "number",
     ["contrast"] = "number",
     ["vf"] = "native",
     ["af"] = "native",
@@ -59,8 +60,6 @@ local triggeredUndoWarning = false
 local removedProfile = {}
 local hasProfile = false
 local usingFolder = false
-
-local original_top
 
 function printTable(t, indent)
     indent = indent or 0
@@ -117,8 +116,6 @@ function runPythonAsync(callback, arg1, arg2)
     if arg1 then table.insert(args, tostring(arg1)) end
     if arg2 then table.insert(args, tostring(arg2)) end
 
-    osd_print(args, 10)
-
     local table = {
         name = "subprocess",
         args = args,
@@ -128,7 +125,6 @@ function runPythonAsync(callback, arg1, arg2)
         osd_print("Python script failed: " .. (result.stderr or "unknown error"), 10)
         if success and result.stdout then
             local python_vars = JSON:decode(result.stdout)
-            osd_print("GRAH "..result.stdout)
             if not python_vars or python_vars["nil"] then
                 callback(nil)
             else
@@ -298,13 +294,6 @@ function setProperties(config)
     end
     for prop, value in pairs(config) do
         if properties[prop] == "special" then
-            if (prop == "ext_volume") then 
-                if (value ~= original_volume) then 
-                    runPythonAsync(function(python) 
-                        --no
-                    end, "setvolume", value)
-                end 
-            end
             if (prop == "folder") then usingFolder = value end
         elseif properties[prop] == "number" then
             mp.set_property_number(prop, value)
@@ -463,13 +452,6 @@ function copyProfile(context)
             local value = mp.get_property_number(prop)
             if value ~= nil then
               profiles[filename][prop] = value
-              if (prop == "ext_volume") then
-                runPythonAsync(function(python)
-                  if (python) then
-                    profiles[filename][prop] = tonumber(python["Volume"])
-                  end
-                end, "getvolume")
-              end
             end
             if (prop == "folder") then profiles[filename][prop] = usingFolder end
           end
@@ -559,20 +541,7 @@ function redoProfile()
     saveProfiles("redo")
 end
 
-runPythonAsync(function(python)
-    if (python) then
-        original_volume = tonumber(python["Volume"])
-    end
-end, "getvolume")
-original_top = mp.get_property_native("ontop")
-
 mp.register_event("file-loaded", function() loadProfiles() end)
-
-mp.register_event("shutdown", function() --not
-    if (hasProfile) then 
-        runPythonSync("setvolume", original_volume) 
-    end
-end)
 
 profileActive = false
 function toggleProfile()
